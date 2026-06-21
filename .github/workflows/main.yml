@@ -22,7 +22,7 @@ jobs:
         echo "deb http://security.ubuntu.com/ubuntu focal-security main" | sudo tee -a /etc/apt/sources.list
         sudo apt-get update
         
-    - name: Cài đặt các gói phụ trợ hệ thống
+    - name: Cài đặt các gói phụ trợ hệ thống (Sửa lỗi Python2 & Libncurses5)
       run: |
         sudo apt-get install -y python2-minimal python2 libssl1.1 libncurses5 libncurses-dev
         sudo apt-get install -y repo git-core gnupg flex bison build-essential zip curl \
@@ -51,29 +51,33 @@ jobs:
         
         kill $KEEPALIVE_PID
 
-    # ================= KHẢO SÁT VÀ TẢI CODE MÁY THẾ HỆ 2 =================
-    - name: Đường 1 (Mới) - Clone Device Tree (Nguồn GiaSen Public)
+    # ================= TẢI CODE MÁY TỪ NGUỒN BẤT TỬ (LINEAGEOS-UL) =================
+    - name: Tải Device Tree (millet3g & msm8226-common)
       run: |
         cd ~/aosp
         export GIT_TERMINAL_PROMPT=0
-        git clone https://github.com/GiaSen/android_device_samsung_millet3g.git -b lineage-15.1 device/samsung/millet3g
+        # Tải cấu hình riêng của dòng máy millet3g
+        git clone https://github.com/LineageOS-UL/android_device_samsung_millet3g.git -b lineage-15.1 device/samsung/millet3g
+        # Tải cấu hình chung msm8226 bắt buộc phải có đi kèm
+        git clone https://github.com/LineageOS-UL/android_device_samsung_msm8226-common.git -b lineage-15.1 device/samsung/msm8226-common
 
-    - name: Đường 2 (Mới) - Clone Kernel Tree (Nguồn LineageOS Unofficial Legacy)
+    - name: Tải Kernel Tree (Dành cho dòng chip msm8226)
       run: |
         cd ~/aosp
         export GIT_TERMINAL_PROMPT=0
         git clone https://github.com/LineageOS-UL/android_kernel_samsung_msm8226.git -b lineage-15.1 kernel/samsung/millet3g
 
-    - name: Đường 3 (Cũ) - Clone Vendor Blobs (Đã xác nhận SỐNG)
+    - name: Tải Vendor Blobs (Thư viện độc quyền để chạy phần cứng)
       run: |
         cd ~/aosp
         export GIT_TERMINAL_PROMPT=0
         git clone https://github.com/TheMuppets/proprietary_vendor_samsung.git -b lineage-15.1 vendor/samsung
-    # ======================================================================
+    # ===============================================================================
 
     - name: Áp dụng EXTREME LITE PATCH & ANDROID GO MODE
       run: |
         cd ~/aosp
+        # Loại bỏ hoạt ảnh hệ thống, hình nền mặc định nặng và bootanimation để tránh treo logo
         rm -rf frameworks/base/data/bootanimation
         sed -i 's/config_windowAnimationScaleDefault">1/config_windowAnimationScaleDefault">0/g' frameworks/base/core/res/res/values/config.xml
         sed -i 's/config_transitionAnimationScaleDefault">1/config_transitionAnimationScaleDefault">0/g' frameworks/base/core/res/res/values/config.xml
@@ -83,14 +87,16 @@ jobs:
         sed -i 's/#000000ff/#000000/g' frameworks/base/core/res/res/values/colors.xml
         rm -f frameworks/base/core/res/res/drawable-nodpi/default_wallpaper.png
         
+        # Bật cấu hình Low RAM (Android Go), kích hoạt phím điều hướng ảo và mở vĩnh viễn ADB qua Wifi khi boot máy
         echo -e "\nro.config.low_ram=true\nqemu.hw.mainkeys=0\nservice.adb.tcp.port=5555\npersist.adb.tcp.port=5555\npersist.sys.usb.config=mtp,adb" >> device/samsung/millet3g/system.prop
         
+        # Ghi đè chỉ thị ép ram thấp vào Makefile tổng của máy
         echo "PRODUCT_PROPERTY_OVERRIDES += ro.config.low_ram=true" >> device/samsung/millet3g/lineage_millet3g.mk
         echo "PRODUCT_PROPERTY_OVERRIDES += qemu.hw.mainkeys=0" >> device/samsung/millet3g/lineage_millet3g.mk
         echo "PRODUCT_PROPERTY_OVERRIDES += service.adb.tcp.port=5555" >> device/samsung/millet3g/lineage_millet3g.mk
         echo "PRODUCT_PROPERTY_OVERRIDES += persist.adb.tcp.port=5555" >> device/samsung/millet3g/lineage_millet3g.mk
 
-    - name: Cấu hình Jack Server
+    - name: Cấu hình Jack Server (Phân bổ RAM tối ưu trên máy ảo)
       run: |
         export JACK_SERVER_VM_ARGUMENTS="-Dfile.encoding=UTF-8 -XX:+TieredCompilation -Xmx4g"
         
@@ -101,6 +107,7 @@ jobs:
         export CCACHE_EXEC=/usr/bin/ccache
         ccache -M 20G
         
+        # Tạo vòng lặp in chữ ngầm để máy chủ GitHub không tự ngắt kết nối
         while true; do echo "...compiling raw code..."; sleep 180; done &
         COMPILE_PID=$!
         
@@ -119,7 +126,7 @@ jobs:
         name: LineageOS 15.1 Extreme Lite (Android Go + ADB Wifi)
         body: |
           Bản build hoàn chỉnh tự động cho Samsung Galaxy Tab 4 8.0 (SM-T331).
-          - Thay thế nguồn Device Tree và Kernel Tree sang kho lưu trữ mở ổn định.
-          - Vượt qua bước gãy liên kết mã nguồn.
+          - Sử dụng nguồn di sản LineageOS-UL an toàn.
+          - Tích hợp các tập lệnh tối ưu hóa hiệu năng, giảm tải dung lượng RAM.
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
