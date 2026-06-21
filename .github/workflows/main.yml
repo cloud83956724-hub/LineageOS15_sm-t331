@@ -1,240 +1,103 @@
-name: Build LineageOS Go 15.1 for SM-T331 (millet3g) Minimal Style
+name: Build LineageOS 15.1 for SM-T331
 
 on:
-  workflow_dispatch:
-
-# Lưu ý: GitHub Actions Free chỉ có Ubuntu làm Linux runner — đây đã là
-# bản Linux "nhẹ nhất" có sẵn, không cần (và không nên) chạy lồng thêm Docker
-# bullseye bên trong vì cách dùng docker://image + args nhiều dòng bash
-# không hoạt động đúng như script gốc. Chạy thẳng trên runner cho ổn định.
+  workflow_dispatch: # Nút bấm kích hoạt build thủ công
 
 jobs:
   build:
-    runs-on: ubuntu-latest
-    timeout-minutes: 350   # job free tier tối đa 360 phút, chừa 10 phút an toàn
-
+    runs-on: ubuntu-latest # Sử dụng phiên bản Ubuntu mới nhất hiện tại của GitHub
+    
     steps:
-    - name: Checkout
-      uses: actions/checkout@v4
+    - name: Checkout Repo
+      uses: actions/checkout@v3
 
-    - name: Maximize Build Space
-      uses: easimon/maximize-build-space@master
-      with:
-        root-reserve-mb: 10240
-        swap-size-mb: 10240
-        remove-dotnet: 'true'
-        remove-android: 'true'
-        remove-haskell: 'true'
-        remove-codeql: 'true'
-        remove-docker-images: 'true'
-
-    - name: Cài đặt gói công cụ cơ bản
+    - name: Cài đặt và Tối ưu hệ thống (Free Disk Space)
       run: |
+        # Giải phóng dung lượng ổ cứng trên máy ảo mới
+        sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/share/powershell
+        sudo apt-get clean
+        
+    - name: Thêm Repository cũ để cài gói phần mềm tương thích (Cho Android 8.1)
+      run: |
+        # Thêm repo chứa thư viện cũ cần thiết vì Ubuntu mới đã lược bỏ một số gói đời cũ
+        sudo add-apt-repository -y ppa:deadsnakes/ppa
         sudo apt-get update
-        sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
-          curl git python3 python-is-python3 sudo gnupg wget \
-          software-properties-common procps ccache bc bison \
-          build-essential flex g++-multilib gcc-multilib gperf \
-          imagemagick lib32readline-dev lib32z1-dev \
-          liblz4-tool libssl-dev \
-          libxml2 libxml2-utils lzop pngcrush rsync schedtool \
-          squashfs-tools xsltproc zip zlib1g-dev
-
-    - name: Cài libncurses5/lib32ncurses-dev (đã bị bỏ khỏi Ubuntu Noble, lấy thủ công từ kho Focal)
+        
+    - name: Cài đặt các gói phụ trợ (Dependencies)
       run: |
-        # Ubuntu 24.04 (Noble) không còn libncurses5/libncurses5-dev/lib32ncurses-dev
-        # trong repo mặc định, nhưng các prebuilt binary cũ của AOSP/LineageOS 15.1
-        # (aapt, dex2oat...) cần thư viện .so.5 này để chạy. Tải trực tiếp .deb từ
-        # kho lưu trữ Focal (20.04) và cài bằng dpkg, bỏ qua phần phụ thuộc thiếu.
-        cd /tmp
-        BASE="http://archive.ubuntu.com/ubuntu/pool/universe/n/ncurses"
-        wget -q "$BASE/libtinfo5_6.2-0ubuntu2_amd64.deb"
-        wget -q "$BASE/libncurses5_6.2-0ubuntu2_amd64.deb"
-        wget -q "$BASE/libtinfo5_6.2-0ubuntu2_i386.deb"
-        wget -q "$BASE/libncurses5_6.2-0ubuntu2_i386.deb"
-        sudo dpkg -i --force-architecture libtinfo5_6.2-0ubuntu2_amd64.deb || true
-        sudo dpkg -i --force-architecture libncurses5_6.2-0ubuntu2_amd64.deb || true
-        sudo dpkg --add-architecture i386
-        sudo apt-get update
-        sudo dpkg -i --force-architecture libtinfo5_6.2-0ubuntu2_i386.deb || true
-        sudo dpkg -i --force-architecture libncurses5_6.2-0ubuntu2_i386.deb || true
-        sudo apt-get install -y -f
-        # lib32ncurses-dev cũng không còn -> cài bản 64-bit dev tương đương cho header
-        sudo DEBIAN_FRONTEND=noninteractive apt-get install -y libncurses-dev:i386 libncurses-dev || true
-
-    - name: Cài đặt OpenJDK 8 (Adoptium/Temurin)
+        sudo apt-get install -y repo git-core gnupg flex bison build-essential zip curl \
+          zlib1g-dev gcc-multilib g++-multilib libc6-dev-i386 lib32ncurses-dev \
+          x11proto-core-dev libx11-dev lib32z1-dev libgl1-mesa-dev libxml2-utils \
+          xsltproc unzip openjdk-8-jdk python2 bc libssl-dev ccache libncurses5
+          
+    - name: Cấu hình Git vĩnh viễn
       run: |
-        wget -qO - https://packages.adoptium.net/artifactory/api/gpg/key/public | sudo apt-key add -
-        echo "deb https://packages.adoptium.net/artifactory/deb $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/adoptium.list
-        sudo apt-get update
-        sudo DEBIAN_FRONTEND=noninteractive apt-get install -y temurin-8-jdk
-        echo "JAVA_HOME=/usr/lib/jvm/temurin-8-jdk-amd64" >> $GITHUB_ENV
-        echo "/usr/lib/jvm/temurin-8-jdk-amd64/bin" >> $GITHUB_PATH
-        echo "USE_CCACHE=1" >> $GITHUB_ENV
-        echo "CCACHE_EXEC=/usr/bin/ccache" >> $GITHUB_ENV
+        git config --global user.email "tuan_android_tinker@example.com"
+        git config --global user.name "Android Builder"
 
-    - name: Cài đặt Repo Tool
+    - name: Khởi tạo Workspace và mã nguồn LineageOS
       run: |
-        mkdir -p "$HOME/bin"
-        curl -s https://storage.googleapis.com/git-repo-downloads/repo > "$HOME/bin/repo"
-        chmod a+x "$HOME/bin/repo"
-        echo "$HOME/bin" >> $GITHUB_PATH
-        git config --global user.name 'DietPiBuilder'
-        git config --global user.email 'dietpi@builder.local'
-        git config --global --add safe.directory '*'
-
-    - name: Khởi tạo nguồn LineageOS
+        mkdir -p ~/aosp
+        cd ~/aosp
+        repo init -u https://github.com/LineageOS/android.git -b lineage-15.1 --depth=1
+        
+    - name: Đồng bộ mã nguồn (Sync Source)
       run: |
-        mkdir -p "$GITHUB_WORKSPACE/android/lineage"
-        cd "$GITHUB_WORKSPACE/android/lineage"
-        repo init -u https://github.com/LineageOS/android.git -b lineage-15.1 --git-lfs --depth=1
+        cd ~/aosp
+        repo sync -c -j8 --force-sync --no-clone-bundle --no-tags
 
-    - name: Tạo local_manifests cho thiết bị millet3g (PORT 15.1 - dùng fork cá nhân)
+    - name: Tải Source Code riêng của dòng máy SM-T331 (millet3g)
       run: |
-        mkdir -p "$GITHUB_WORKSPACE/android/lineage/.repo/local_manifests"
-        cat << 'EOF' > "$GITHUB_WORKSPACE/android/lineage/.repo/local_manifests/millet3g.xml"
-        <?xml version="1.0" encoding="UTF-8"?>
-        <manifest>
-          <!-- 4 repo dưới đây là FORK của bạn, branch lineage-15.1, đang trong quá trình port -->
-          <project name="cloud83956724-hub/android_device_samsung_millet3g.git" path="device/samsung/millet3g" remote="github" revision="lineage-15.1" />
-          <project name="cloud83956724-hub/android_device_samsung_msm8226-common.git" path="device/samsung/msm8226-common" remote="github" revision="lineage-15.1" />
-          <project name="cloud83956724-hub/android_kernel_samsung_msm8226.git" path="kernel/samsung/msm8226" remote="github" revision="lineage-15.1" />
-          <project name="cloud83956724-hub/android_vendor_samsung_millet3g.git" path="vendor/samsung/millet3g" remote="github" revision="lineage-15.1" />
+        cd ~/aosp
+        git clone https://github.com/d855-dev/android_device_samsung_millet3g.git -b lineage-15.1 device/samsung/millet3g
+        git clone https://github.com/d855-dev/android_kernel_samsung_msm8226.git -b lineage-15.1 kernel/samsung/millet3g
+        git clone https://github.com/d855-dev/android_vendor_samsung_millet3g.git -b lineage-15.1 vendor/samsung/millet3g
 
-          <!-- Các repo dùng chung, lấy thẳng từ nguồn chính thức branch lineage-15.1 (đã xác nhận tồn tại) -->
-          <project name="LineageOS/android_device_qcom_common.git" path="device/qcom/common" remote="github" revision="lineage-15.1" />
-          <project name="LineageOS/android_device_samsung_qcom-common.git" path="device/samsung/qcom-common" remote="github" revision="lineage-15.1" />
-          <project name="LineageOS/android_hardware_samsung.git" path="hardware/samsung" remote="github" revision="lineage-15.1" />
-          <project name="TheMuppets/proprietary_vendor_samsung.git" path="vendor/samsung" remote="github" revision="lineage-15.1" />
-        </manifest>
-        EOF
-
-    - name: Đồng bộ mã nguồn (repo sync)
+    - name: Áp dụng EXTREME LITE PATCH & ANDROID GO MODE
       run: |
-        cd "$GITHUB_WORKSPACE/android/lineage"
-        repo sync -c --force-sync --no-clone-bundle --no-tags -j$(nproc --all)
+        cd ~/aosp
+        # Xóa hoạt ảnh, hình nền, bootanimation
+        rm -rf frameworks/base/data/bootanimation
+        sed -i 's/config_windowAnimationScaleDefault">1/config_windowAnimationScaleDefault">0/g' frameworks/base/core/res/res/values/config.xml
+        sed -i 's/config_transitionAnimationScaleDefault">1/config_transitionAnimationScaleDefault">0/g' frameworks/base/core/res/res/values/config.xml
+        sed -i 's/config_animatorDurationScaleDefault">1/config_animatorDurationScaleDefault">0/g' frameworks/base/core/res/res/values/config.xml
+        sed -i 's/config_defaultNightMode.*/config_defaultNightMode">2</g' frameworks/base/core/res/res/values/config.xml
+        sed -i 's/#121212/#000000/g' frameworks/base/core/res/res/values/colors.xml
+        sed -i 's/#000000ff/#000000/g' frameworks/base/core/res/res/values/colors.xml
+        rm -f frameworks/base/core/res/res/drawable-nodpi/default_wallpaper.png
+        
+        # Thêm Low RAM, Phím ảo và ADB Wifi vĩnh viễn khi khởi động
+        echo -e "\nro.config.low_ram=true\nqemu.hw.mainkeys=0\nservice.adb.tcp.port=5555\npersist.adb.tcp.port=5555\npersist.sys.usb.config=mtp,adb" >> device/samsung/millet3g/system.prop
+        
+        # Ghi đè vào Makefile tổng
+        echo "PRODUCT_PROPERTY_OVERRIDES += ro.config.low_ram=true" >> device/samsung/millet3g/lineage_millet3g.mk
+        echo "PRODUCT_PROPERTY_OVERRIDES += qemu.hw.mainkeys=0" >> device/samsung/millet3g/lineage_millet3g.mk
+        echo "PRODUCT_PROPERTY_OVERRIDES += service.adb.tcp.port=5555" >> device/samsung/millet3g/lineage_millet3g.mk
+        echo "PRODUCT_PROPERTY_OVERRIDES += persist.adb.tcp.port=5555" >> device/samsung/millet3g/lineage_millet3g.mk
 
-    - name: Tải Wallpaper.png từ repo của bạn
+    - name: Cấu hình Jack Server (Giới hạn RAM trên máy ảo GitHub)
       run: |
-        curl -L -o "$GITHUB_WORKSPACE/Wallpaper.png" \
-          https://raw.githubusercontent.com/cloud83956724-hub/LOS15millet3g/main/Wallpaper.png
-        file "$GITHUB_WORKSPACE/Wallpaper.png"
-
-    - name: Loại bỏ wallpaper gốc và thay bằng Wallpaper.png
+        export JACK_SERVER_VM_ARGUMENTS="-Dfile.encoding=UTF-8 -XX:+TieredCompilation -Xmx4g"
+        
+    - name: Tiến hành Compile ROM (Bắt đầu Build)
       run: |
-        cd "$GITHUB_WORKSPACE/android/lineage"
-        SRC="$GITHUB_WORKSPACE/Wallpaper.png"
-
-        # Tìm toàn bộ default_wallpaper*.{png,jpg,webp} trong frameworks/base và ghi đè
-        find frameworks/base -iname "default_wallpaper*.png" -o -iname "default_wallpaper*.jpg" | while read -r f; do
-          echo "Thay thế: $f"
-          cp -f "$SRC" "$f"
-        done
-
-        # Đảm bảo các thư mục mật độ pixel chính chắc chắn có wallpaper, kể cả khi
-        # thư mục đó chưa tồn tại trong source gốc
-        for dir in \
-          frameworks/base/core/res/res/drawable-nodpi \
-          frameworks/base/core/res/res/drawable-sw600dp-nodpi \
-          frameworks/base/core/res/res/drawable-sw720dp-nodpi
-        do
-          mkdir -p "$dir"
-          cp -f "$SRC" "$dir/default_wallpaper.png"
-        done
-
-        # Gỡ bỏ bộ wallpaper động/live wallpaper mặc định của LineageOS nếu có (PhotoTable, NoiseField, v.v.)
-        for pkg in packages/wallpapers/LivePicker packages/wallpapers/PhaseBeam packages/wallpapers/HoloSpiral packages/wallpapers/NoiseField packages/wallpapers/MagicSmoke packages/wallpapers/PhotoTable packages/wallpapers/Galaxy4; do
-          if [ -d "$pkg" ]; then
-            echo "Xoá live wallpaper: $pkg"
-            rm -rf "$pkg"
-          fi
-        done
-
-    - name: Đổi tông màu chủ đạo sang Xanh dương / Đen / Trắng
-      run: |
-        cd "$GITHUB_WORKSPACE/android/lineage"
-        # LƯU Ý QUAN TRỌNG: Android 8.1 / LineageOS 15.1 KHÔNG có hệ thống Theme/RRO
-        # đầy đủ như các bản LOS mới hơn. Cách dưới đây patch trực tiếp các file
-        # colors.xml của framework, SystemUI và Settings — phủ phần lớn UI hệ thống
-        # (thanh trạng thái, công tắc, accent color) nhưng KHÔNG đảm bảo đổi màu
-        # 100% mọi ứng dụng bên thứ ba.
-        BLUE="#FF2196F3"
-        BLACK="#FF000000"
-        WHITE="#FFFFFFFF"
-
-        for f in frameworks/base/core/res/res/values/colors.xml \
-                 packages/apps/Settings/res/values/colors.xml \
-                 frameworks/base/packages/SystemUI/res/values/colors.xml; do
-          if [ -f "$f" ]; then
-            echo "Patch màu: $f"
-            sed -i "s/name=\"accent_device_default_light\">#[0-9A-Fa-f]*</name=\"accent_device_default_light\">$BLUE</" "$f" || true
-            sed -i "s/name=\"accent_device_default_dark\">#[0-9A-Fa-f]*</name=\"accent_device_default_dark\">$BLUE</" "$f" || true
-            sed -i "s/name=\"colorAccent\">#[0-9A-Fa-f]*</name=\"colorAccent\">$BLUE</" "$f" || true
-            sed -i "s/name=\"colorPrimary\">#[0-9A-Fa-f]*</name=\"colorPrimary\">$BLACK</" "$f" || true
-            sed -i "s/name=\"colorPrimaryDark\">#[0-9A-Fa-f]*</name=\"colorPrimaryDark\">$BLACK</" "$f" || true
-            sed -i "s/name=\"colorBackground\">#[0-9A-Fa-f]*</name=\"colorBackground\">$WHITE</" "$f" || true
-          fi
-        done
-
-    - name: Loại bỏ trình duyệt gốc và app không cần thiết (KHÔNG có GMS sẵn trong LOS gốc nên không cần gỡ riêng)
-      run: |
-        cd "$GITHUB_WORKSPACE/android/lineage"
-        # LineageOS chính thống vốn không kèm GMS/Google apps — chỉ cần KHÔNG cài
-        # thêm gói GApps là đủ. Phần dưới đây gỡ trình duyệt mặc định (Jelly/Browser)
-        # khỏi danh sách build của thiết bị nếu file mk tồn tại.
-        MK="device/samsung/millet3g/lineage_millet3g.mk"
-        if [ -f "$MK" ]; then
-          echo "PRODUCT_PACKAGES := \$(filter-out Jelly Browser2 PackageInstallerGoogle, \$(PRODUCT_PACKAGES))" >> "$MK"
-        fi
-
-    - name: Bật ADB over Network mặc định, giữ trạng thái bật kể cả sau reboot
-      run: |
-        cd "$GITHUB_WORKSPACE/android/lineage"
-        PROP="device/samsung/millet3g/system.prop"
-        touch "$PROP"
-        # qemu.hw.mainkeys=0 đã có sẵn trong system.prop gốc của S3NEO device tree
-        # nên chỉ thêm nếu chưa tồn tại, tránh trùng dòng
-        grep -qxF "qemu.hw.mainkeys=0" "$PROP" || echo "qemu.hw.mainkeys=0" >> "$PROP"
-        {
-          echo "persist.adb.tcp.port=5555"
-          echo "service.adb.tcp.port=5555"
-          echo "persist.sys.usb.config=adb"
-        } >> "$PROP"
-
-    - name: Cấu hình bản Android Go (nhẹ, tối giản) + tối ưu độ mượt
-      run: |
-        cd "$GITHUB_WORKSPACE/android/lineage"
-        MK="device/samsung/millet3g/lineage_millet3g.mk"
-        {
-          echo "PRODUCT_MINIMIZE_JAVA_DEBUG_INFO := true"
-          echo "include build/make/target/product/go_defaults.mk"
-        } >> "$MK"
-
-        PROP="device/samsung/millet3g/system.prop"
-        {
-          # Giảm thời gian animation hệ thống để cảm giác mượt hơn (giống tinh thần "Go")
-          echo "ro.config.no_pause=true"
-          echo "debug.sf.disable_backpressure=1"
-          echo "ro.surface_flinger.use_color_management=false"
-          # Giảm ưu tiên các tiến trình nền không cần thiết để tiết kiệm RAM (máy 1.5GB RAM)
-          echo "ro.config.low_ram=true"
-          echo "ro.vendor.qti.va_aac.support=false"
-        } >> "$PROP"
-
-    - name: Build ROM
-      run: |
-        cd "$GITHUB_WORKSPACE/android/lineage"
+        cd ~/aosp
         export USE_CCACHE=1
         export CCACHE_EXEC=/usr/bin/ccache
-        ccache -M 50G
+        ccache -M 20G
         source build/envsetup.sh
         lunch lineage_millet3g-userdebug
-        mka bacon -j$(nproc --all)
-        cp out/target/product/millet3g/lineage-*.zip "$GITHUB_WORKSPACE/"
+        mka bacon -j2
 
-    - name: Upload ROM to GitHub Artifacts
-      uses: actions/upload-artifact@v4
+    - name: Đẩy sản phẩm ROM .zip lên mục GitHub Releases
+      uses: softprops/action-gh-release@v1
+      if: success()
       with:
-        name: LineageOS_Go_15.1_SM-T331_DietPiStyle
-        path: lineage-*.zip
-        retention-days: 14
+        files: /home/runner/aosp/out/target/product/millet3g/*.zip
+        tag_name: lineage-15.1-millet3g-lite
+        name: LineageOS 15.1 Extreme Lite (Android Go + ADB Wifi)
+        body: |
+          Bản build tự động hoàn chỉnh cho Samsung Galaxy Tab 4 8.0 (SM-T331).
+          - Chạy trên môi trường Ubuntu nâng cấp mới nhất.
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
