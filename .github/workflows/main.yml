@@ -44,38 +44,31 @@ jobs:
     - name: Đồng bộ mã nguồn (CHỐNG TIMEOUT - Bơm Log liên tục)
       run: |
         cd ~/aosp
-        # Tạo một vòng lặp chạy ngầm, cứ 3 phút lại in ra một dấu chấm để GitHub biết máy vẫn đang hoạt động
         while true; do echo "...keep-alive..."; sleep 180; done &
         KEEPALIVE_PID=$!
         
-        # Chạy lệnh sync chính
         repo sync -c -j8 --force-sync --no-clone-bundle --no-tags
         
-        # Tắt vòng lặp sau khi sync xong
         kill $KEEPALIVE_PID
 
-    # ================= THỬ TỪNG CON ĐƯỜNG CỦA DEVICE TREE =================
-    - name: Đường 1 - Clone Device Tree (Nguồn msm8226-dev cộng đồng)
-      continue-on-error: true # Nếu lỗi bước này, GitHub vẫn chạy tiếp bước sau chứ không dừng
+    # ================= KHẢO SÁT VÀ TẢI CODE MÁY THẾ HỆ 2 =================
+    - name: Đường 1 (Mới) - Clone Device Tree (Nguồn GiaSen Public)
       run: |
         cd ~/aosp
         export GIT_TERMINAL_PROMPT=0
-        git clone https://github.com/samsung-msm8226/android_device_samsung_millet3g.git -b lineage-15.1 device/samsung/millet3g
+        git clone https://github.com/GiaSen/android_device_samsung_millet3g.git -b lineage-15.1 device/samsung/millet3g
 
-    - name: Đường 2 - Clone Kernel Tree (Chung dòng msm8226)
-      continue-on-error: true
+    - name: Đường 2 (Mới) - Clone Kernel Tree (Nguồn LineageOS Unofficial Legacy)
       run: |
         cd ~/aosp
         export GIT_TERMINAL_PROMPT=0
-        git clone https://github.com/samsung-msm8226/android_kernel_samsung_msm8226.git -b lineage-15.1 kernel/samsung/millet3g
+        git clone https://github.com/LineageOS-UL/android_kernel_samsung_msm8226.git -b lineage-15.1 kernel/samsung/millet3g
 
-    - name: Đường 3 - Clone Vendor Blobs (Kho Muppets khổng lồ)
-      continue-on-error: true
+    - name: Đường 3 (Cũ) - Clone Vendor Blobs (Đã xác nhận SỐNG)
       run: |
         cd ~/aosp
         export GIT_TERMINAL_PROMPT=0
         git clone https://github.com/TheMuppets/proprietary_vendor_samsung.git -b lineage-15.1 vendor/samsung
-
     # ======================================================================
 
     - name: Áp dụng EXTREME LITE PATCH & ANDROID GO MODE
@@ -108,7 +101,6 @@ jobs:
         export CCACHE_EXEC=/usr/bin/ccache
         ccache -M 20G
         
-        # Bơm log chống sập ngầm khi thực hiện lệnh build nặng
         while true; do echo "...compiling raw code..."; sleep 180; done &
         COMPILE_PID=$!
         
@@ -127,7 +119,7 @@ jobs:
         name: LineageOS 15.1 Extreme Lite (Android Go + ADB Wifi)
         body: |
           Bản build hoàn chỉnh tự động cho Samsung Galaxy Tab 4 8.0 (SM-T331).
-          - Áp dụng chiến lược kiểm thử từng đường dẫn độc lập.
-          - Tích hợp vòng lặp keep-alive chống timeout máy chủ.
+          - Thay thế nguồn Device Tree và Kernel Tree sang kho lưu trữ mở ổn định.
+          - Vượt qua bước gãy liên kết mã nguồn.
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
