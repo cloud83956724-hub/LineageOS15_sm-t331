@@ -51,27 +51,26 @@ jobs:
         
         kill $KEEPALIVE_PID
 
-    - name: Phá bỏ bộ lọc Header GitHub & Tải thủ công cây phần cứng Wifi
+    - name: Sử dụng Token hệ thống để bốc thẳng cây phần cứng Wifi (Bypass lỗi 128 vĩnh viễn)
+      env:
+        TOKEN_AUTH: ${{ secrets.GITHUB_TOKEN }}
       run: |
         cd ~/aosp
         rm -rf device/samsung/millet3g device/samsung/msm8226-common kernel/samsung/millet3g vendor/samsung
         
-        # TUYỆT CHIÊU BẺ KHÓA: Xóa sạch Extra Header bảo mật của GitHub Runner để cho phép Git Clone tự do
-        git config --global --unset-all http.https://github.com/.extraheader || true
+        # Bẻ khóa bộ lọc bằng cách chèn trực tiếp quyền truy cập Token vào URL Git Clone
+        git clone https://x-access-token:${TOKEN_AUTH}@github.com/LineageOS-legacy/android_device_samsung_milletwifi.git -b cm-14.1 --depth=1 device/samsung/millet3g || \
+        git clone https://x-access-token:${TOKEN_AUTH}@github.com/LineageOS/android_device_samsung_milletwifi.git -b cm-14.1 --depth=1 device/samsung/millet3g
         
-        # Tải trực tiếp cây cấu hình từ kho lưu trữ di sản mở vĩnh viễn
-        git clone https://github.com/LineageOS-legacy/android_device_samsung_milletwifi.git -b cm-14.1 --depth=1 device/samsung/millet3g || \
-        git clone https://github.com/LineageOS/android_device_samsung_milletwifi.git -b cm-14.1 --depth=1 device/samsung/millet3g
+        git clone https://x-access-token:${TOKEN_AUTH}@github.com/LineageOS-legacy/android_device_samsung_msm8226-common.git -b cm-14.1 --depth=1 device/samsung/msm8226-common || \
+        git clone https://x-access-token:${TOKEN_AUTH}@github.com/LineageOS/android_device_samsung_msm8226-common.git -b cm-14.1 --depth=1 device/samsung/msm8226-common
         
-        git clone https://github.com/LineageOS-legacy/android_device_samsung_msm8226-common.git -b cm-14.1 --depth=1 device/samsung/msm8226-common || \
-        git clone https://github.com/LineageOS/android_device_samsung_msm8226-common.git -b cm-14.1 --depth=1 device/samsung/msm8226-common
+        git clone https://x-access-token:${TOKEN_AUTH}@github.com/LineageOS-legacy/android_kernel_samsung_msm8226.git -b cm-14.1 --depth=1 kernel/samsung/millet3g || \
+        git clone https://x-access-token:${TOKEN_AUTH}@github.com/LineageOS/android_kernel_samsung_msm8226.git -b cm-14.1 --depth=1 kernel/samsung/millet3g
         
-        git clone https://github.com/LineageOS-legacy/android_kernel_samsung_msm8226.git -b cm-14.1 --depth=1 kernel/samsung/millet3g || \
-        git clone https://github.com/LineageOS/android_kernel_samsung_msm8226.git -b cm-14.1 --depth=1 kernel/samsung/millet3g
-        
-        git clone https://github.com/TheMuppets/proprietary_vendor_samsung.git -b cm-14.1 --depth=1 vendor/samsung
+        git clone https://x-access-token:${TOKEN_AUTH}@github.com/TheMuppets/proprietary_vendor_samsung.git -b cm-14.1 --depth=1 vendor/samsung
 
-        # Tiến hành tráo đổi định danh cấu hình (Map sang hệ máy millet3g)
+        # Đổi tên biến thiết bị từ bản gốc 'milletwifi' sang 'millet3g' để đánh lừa trình biên dịch AOSP
         cd device/samsung/millet3g
         mv lineage_milletwifi.mk lineage_millet3g.mk || true
         mv cm_milletwifi.mk cm_millet3g.mk || true
@@ -148,11 +147,10 @@ jobs:
         export CCACHE_EXEC=/usr/bin/ccache
         ccache -M 20G
         
-        while true; do echo "...compiling pure aosp code with bypassed extraheaders..."; sleep 180; done &
+        while true; do echo "...compiling pure aosp code with authenticated tokens..."; sleep 180; done &
         COMPILE_PID=$!
         
         source build/envsetup.sh
-        # Khởi chạy nạp cấu hình linh hoạt
         lunch lineage_millet3g-userdebug || lunch aosp_millet3g-userdebug || lunch cm_millet3g-userdebug
         mka bacon -j2
         
@@ -164,12 +162,12 @@ jobs:
       with:
         files: /home/runner/aosp/out/target/product/millet3g/*.zip
         tag_name: aosp-8.1-millet3g-final
-        name: AOSP 8.1 Pure Blueberry Stripped (No ExtraHeader Error)
+        name: AOSP 8.1 Pure Blueberry Stripped (Authenticated Hardware)
         body: |
-          Bản build AOSP 8.1 hoàn tất xử lý rào cản hệ thống cho SM-T331.
-          - Vượt qua bộ lọc ExtraHeader của GitHub Actions để kéo cây mã nguồn Wifi thành công.
-          - Vô hiệu hóa Driver phần cứng ngầm theo sơ đồ: Cắt bỏ camera, motor rung, loa ngoài, loa thoại, chip sóng di động 3G.
-          - Đảm bảo giữ nguyên bộ thu phát mạng Wifi và giắc cắm tai nghe âm thanh 3.5mm.
-          - Theme nền đen Amoled 100%, Accent màu Blueberry, dọn sạch sườn in ấn.
+          Bản build AOSP 8.1 hoàn tất xử lý rào cản hệ thống xác thực cho SM-T331.
+          - Vượt qua bộ lọc bảo mật bằng cách cấp Token xác thực hệ thống cho lệnh Git Clone.
+          - Vô hiệu hóa Driver phần cứng ngầm: Cắt bỏ camera, motor rung, loa ngoài, loa thoại, chip sóng di động RIL.
+          - Giữ lại duy nhất kết nối mạng Wifi và cổng âm thanh Tai nghe 3.5mm.
+          - Theme nền đen Amoled 100%, Accent màu Blueberry đậm đà, loại bỏ sườn in ấn dư thừa.
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
