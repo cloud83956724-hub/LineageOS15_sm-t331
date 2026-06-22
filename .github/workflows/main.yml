@@ -1,4 +1,4 @@
-name: Build LineageOS 15.1 Custom Lite for SM-T331
+name: Build AOSP 8.1 Pure Lite for SM-T331
 
 on:
   workflow_dispatch:
@@ -35,21 +35,23 @@ jobs:
         git config --global user.email "tuan_android_tinker@example.com"
         git config --global user.name "Android Builder"
 
-    - name: Khởi tạo Workspace và mã nguồn LineageOS 15.1
+    - name: Khởi tạo Workspace mã nguồn AOSP 8.1 Gốc (Google Bất tử)
       run: |
         mkdir -p ~/aosp
         cd ~/aosp
-        repo init -u https://github.com/LineageOS/android.git -b lineage-15.1 --depth=1
+        # Đồng bộ trực tiếp từ máy chủ Google Android gốc
+        repo init -u https://android.googlesource.com/platform/manifest -b android-8.1.0_r81 --depth=1
 
-    - name: Khởi tạo Local Manifest (Bypass lỗi Git Clone qua giao thức HTTPS trực tiếp)
+    - name: Khởi tạo Local Manifest (Dùng nguồn GitLab Mirror chống lỗi Username)
       run: |
         mkdir -p ~/aosp/.repo/local_manifests
-        cat <<EOF > ~/aosp/.repo/local_manifests/roomservice.xml
+        cat <<EOF > ~/aosp/.repo/local_manifests/msm8226.xml
         <?xml version="1.0" encoding="UTF-8"?>
         <manifest>
           <remote name="tinker-source" fetch="https://gitlab.com/android-legacy-mirror" />
           <remote name="muppets" fetch="https://github.com/TheMuppets" />
-
+          
+          <!-- Ghép phần cứng của dòng máy vào nền AOSP gốc -->
           <project name="android_device_samsung_millet3g" path="device/samsung/millet3g" remote="tinker-source" revision="lineage-15.1" />
           <project name="android_device_samsung_msm8226-common" path="device/samsung/msm8226-common" remote="tinker-source" revision="lineage-15.1" />
           <project name="android_kernel_samsung_msm8226" path="kernel/samsung/millet3g" remote="tinker-source" revision="lineage-15.1" />
@@ -57,7 +59,7 @@ jobs:
         </manifest>
         EOF
         
-    - name: Đồng bộ mã nguồn (CHỐNG TIMEOUT - Bơm Log liên tục)
+    - name: Đồng bộ toàn bộ mã nguồn (CHỐNG TIMEOUT - Bơm Log liên tục)
       run: |
         cd ~/aosp
         while true; do echo "...keep-alive..."; sleep 180; done &
@@ -67,27 +69,20 @@ jobs:
         
         kill $KEEPALIVE_PID
 
-    - name: Áp dụng LITE PATCH (Giữ Blueberry Accent + Xóa Print Service + Nền đen đơn sắc)
+    - name: Áp dụng CHẾ ĐỘ CUSTOM AOSP LITE (Màu Blueberry + Xóa Print + Nền đen + Build.prop)
       run: |
         cd ~/aosp
-        # 1. Xóa hoàn toàn bộ sườn dịch vụ In Ấn ngầm (Print Spooler) để giải phóng RAM
+        # 1. Triệt tiêu hoàn toàn dịch vụ in ấn chạy ngầm (Giải phóng RAM)
         rm -rf packages/apps/PrintSpooler
-        rm -rf packages/services/PrintService
         
-        # 2. Xóa sạch các gói màu Accent khác trong LineageOS, CHỈ GIỮ LẠI gói màu xanh Blueberry
-        # Di chuyển vào thư mục chứa các gói overlay màu sắc của LineageOS
-        cd packages/apps/LineageParts/res/
-        find . -maxdepth 1 -name "overlay_accent_*" ! -name "*blue*" -exec rm -rf {} +
-        cd ~/aosp
-        
-        # 3. Loại bỏ Bootanimation (Màn hình khởi động đen tuyệt đối, boot cực nhanh)
+        # 2. Xóa hoàn toàn Bootanimation (Màn hình khởi động đen tuyệt đối, boot siêu tốc)
         rm -rf frameworks/base/data/bootanimation
         
-        # 4. Thay thế hình nền mặc định thành một màu đen đơn (Pure Black) thông qua mã Hex mã hóa ảnh 1x1
+        # 3. Ép hình nền mặc định thành màu đen đơn (Pure Black) bằng ảnh 1x1 pixel mã hóa
         rm -f frameworks/base/core/res/res/drawable-nodpi/default_wallpaper.png
         printf '\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc\x00\x01\x00\x00\x05\x00\x01\r\n-\xb4\x00\x00\x00\x00IEND\xaeB`\x82' > frameworks/base/core/res/res/drawable-nodpi/default_wallpaper.png
 
-        # 5. Ép hệ thống tắt hiệu ứng chuyển cảnh & Đưa toàn bộ giao diện nền về đen Amoled
+        # 4. Tắt sạch hiệu ứng chuyển cảnh & Ép hệ thống về màu nền đen Amoled 
         sed -i 's/config_windowAnimationScaleDefault">1/config_windowAnimationScaleDefault">0/g' frameworks/base/core/res/res/values/config.xml
         sed -i 's/config_transitionAnimationScaleDefault">1/config_transitionAnimationScaleDefault">0/g' frameworks/base/core/res/res/values/config.xml
         sed -i 's/config_animatorDurationScaleDefault">1/config_animatorDurationScaleDefault">0/g' frameworks/base/core/res/res/values/config.xml
@@ -95,34 +90,41 @@ jobs:
         sed -i 's/#121212/#000000/g' frameworks/base/core/res/res/values/colors.xml
         sed -i 's/#000000ff/#000000/g' frameworks/base/core/res/res/values/colors.xml
         
-        # 6. Tinh chỉnh sâu vào build.prop (thông qua system.prop của máy)
-        # Ép máy cấu hình RAM thấp (Android Go), bật phím ảo, mở vĩnh viễn ADB Wifi khi khởi động
+        # 5. ĐỔI MÀU ĐIỂM NHẤN CHỦ ĐẠO (ACCENT COLOR) THÀNH XANH BLUEBERRY
+        # Ghi đè mã màu Teal mặc định của Google sang màu xanh việt quất đậm cho toàn bộ Framework
+        sed -i 's/#ff009688/#0077ff/g' frameworks/base/core/res/res/values/colors.xml
+        sed -i 's/#ff00796b/#0055cc/g' frameworks/base/core/res/res/values/colors.xml
+        sed -i 's/#material_deep_teal_500">#ff009688/#material_deep_teal_500">#0077ff/g' frameworks/base/core/res/res/values/colors_material.xml
+        sed -i 's/#material_deep_teal_200">#ff80cbc4/#material_deep_teal_200">#80b3ff/g' frameworks/base/core/res/res/values/colors_material.xml
+
+        # 6. Tinh chỉnh sâu vào build.prop (thông qua system.prop của thiết bị)
         echo -e "\nro.config.low_ram=true" >> device/samsung/millet3g/system.prop
         echo -e "qemu.hw.mainkeys=0" >> device/samsung/millet3g/system.prop
         echo -e "service.adb.tcp.port=5555" >> device/samsung/millet3g/system.prop
         echo -e "persist.adb.tcp.port=5555" >> device/samsung/millet3g/system.prop
         echo -e "persist.sys.usb.config=mtp,adb" >> device/samsung/millet3g/system.prop
         
-        # Tối ưu hóa phản hồi cảm ứng, ngủ sâu tiết kiệm pin và hiệu suất đồ họa phần cứng
+        # Thêm các thông số tối ưu đồ họa, phản hồi cảm ứng cực nhạy cho màn hình cổ
         echo -e "ro.ripper.gpurender=true\nvideo.accelerate.hw=1\ndebug.performance.tuning=1\nwindowsmgr.max_events_per_sec=150" >> device/samsung/millet3g/system.prop
         echo -e "ro.sys.fw.bg_apps_limit=4\npm.sleep_mode=1\nro.phone_shell=1" >> device/samsung/millet3g/system.prop
 
-    - name: Cấu hình Jack Server (Giới hạn RAM máy ảo)
+    - name: Cấu hình Jack Server
       run: |
         export JACK_SERVER_VM_ARGUMENTS="-Dfile.encoding=UTF-8 -XX:+TieredCompilation -Xmx4g"
         
-    - name: Tiến hành Compile ROM (CHỐNG TIMEOUT - Bơm Log khi Biên dịch)
+    - name: Tiến hành Biên dịch ROM AOSP (CHỐNG TIMEOUT)
       run: |
         cd ~/aosp
         export USE_CCACHE=1
         export CCACHE_EXEC=/usr/bin/ccache
         ccache -M 20G
         
-        while true; do echo "...compiling tailored lineageos..."; sleep 180; done &
+        while true; do echo "...compiling pure aosp code..."; sleep 180; done &
         COMPILE_PID=$!
         
         source build/envsetup.sh
-        lunch lineage_millet3g-userdebug
+        # Khởi chạy nạp cấu hình máy 
+        lunch lineage_millet3g-userdebug || lunch aosp_millet3g-userdebug
         mka bacon -j2
         
         kill $COMPILE_PID
@@ -132,13 +134,12 @@ jobs:
       if: success()
       with:
         files: /home/runner/aosp/out/target/product/millet3g/*.zip
-        tag_name: lineage-15.1-millet3g-custom-lite
-        name: LineageOS 15.1 Blueberry Custom Lite (No Print + Pure Black)
+        tag_name: aosp-8.1-millet3g-pure-blueberry
+        name: AOSP 8.1 Pure Blueberry Lite (No Print + Amoled Black)
         body: |
-          Bản build rút gọn tối đa độc quyền cho Samsung Galaxy Tab 4 8.0 (SM-T331).
-          - Chỉ giữ lại duy nhất tông màu Blueberry Accent của LineageOS.
-          - Gỡ bỏ hoàn toàn bộ lõi in ấn (Print Spooler/Services) chạy ngầm.
-          - Ép màn hình nền đen tuyệt đối (Pure Black 1x1 Wallpaper).
-          - Kích hoạt tổ hợp phím ảo Navigation Bar và mở sẵn cổng ADB qua mạng Wifi.
+          Bản build AOSP 8.1 siêu sạch được tùy biến sâu cho Samsung Galaxy Tab 4 8.0 (SM-T331).
+          - Thay đổi trực tiếp Accent Color hệ thống sang tông xanh Blueberry.
+          - Gỡ bỏ hoàn toàn PrintSpooler ngầm.
+          - Hình nền mặc định đen tuyền, phím ảo kích hoạt sẵn và mở cổng ADB mạng.
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
