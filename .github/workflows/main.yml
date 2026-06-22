@@ -1,4 +1,4 @@
-name: Build AOSP 8.1 Custom Hardware Lite for SM-T331
+name: Build AOSP 8.1 Stripped Hardware for SM-T331
 
 on:
   workflow_dispatch:
@@ -35,60 +35,63 @@ jobs:
         git config --global user.email "tuan_android_tinker@example.com"
         git config --global user.name "Android Builder"
 
-    - name: Khởi tạo Workspace mã nguồn AOSP 8.1 Gốc (Google Bất tử)
+    - name: Khởi tạo Workspace mã nguồn AOSP 8.1 Gốc
       run: |
         mkdir -p ~/aosp
         cd ~/aosp
+        # Chỉ init bộ mã nguồn cốt lõi thuần túy của Google
         repo init -u https://android.googlesource.com/platform/manifest -b android-8.1.0_r81 --depth=1
 
-    - name: Khởi tạo Local Manifest (Nguồn Github Mirror Công khai vĩnh viễn)
-      run: |
-        mkdir -p ~/aosp/.repo/local_manifests
-        cat <<EOF > ~/aosp/.repo/local_manifests/msm8226.xml
-        <?xml version="1.0" encoding="UTF-8"?>
-        <manifest>
-          <!-- Sử dụng kho mirror công khai của LineageOS để bypass hoàn toàn lỗi Username -->
-          <remote name="github-mirror" fetch="https://github.com/LineageOS-mirror" />
-          <remote name="muppets" fetch="https://github.com/TheMuppets" />
-          
-          <project name="android_device_samsung_millet3g" path="device/samsung/millet3g" remote="github-mirror" revision="lineage-15.1" />
-          <project name="android_device_samsung_msm8226-common" path="device/samsung/msm8226-common" remote="github-mirror" revision="lineage-15.1" />
-          <project name="android_kernel_samsung_msm8226" path="kernel/samsung/millet3g" remote="github-mirror" revision="lineage-15.1" />
-          <project name="proprietary_vendor_samsung" path="vendor/samsung" remote="muppets" revision="lineage-15.1" />
-        </manifest>
-        EOF
-        
-    - name: Đồng bộ toàn bộ mã nguồn (CHỐNG TIMEOUT - Bơm Log liên tục)
+    - name: Đồng bộ mã nguồn cơ sở AOSP (CHỐNG TIMEOUT)
       run: |
         cd ~/aosp
         while true; do echo "...keep-alive..."; sleep 180; done &
         KEEPALIVE_PID=$!
         
+        # Đồng bộ sạch sẽ hệ thống cốt lõi trước, không cài cắm manifest phần cứng lỗi vào đây
         repo sync -c -j4 --force-sync --no-clone-bundle --no-tags --fail-fast
         
         kill $KEEPALIVE_PID
 
-    - name: Áp dụng SIÊU CẮT GIẢM DRIVERS PHẦN CỨNG (Bảo tồn cổng 3.5mm)
+    - name: Bốc thẳng phần cứng bằng Git Clone thủ công (Bypass hoàn toàn Repo lỗi)
       run: |
         cd ~/aosp
-        # 1. Đi sâu vào cấu hình Kernel (defconfig) để triệt hạ các Driver phần cứng mục tiêu
+        # Tạo sẵn các cấu trúc thư mục đích
+        mkdir -p device/samsung/millet3g
+        mkdir -p device/samsung/msm8226-common
+        mkdir -p kernel/samsung/millet3g
+        mkdir -p vendor/samsung
+        
+        # Tải trực tiếp cây cấu hình từ các nhánh di sản còn sống sót trên GitHub bằng lệnh Git truyền thống
+        git clone https://github.com/Unlegacy-Android/android_device_samsung_millet3g.git -b unlegacy-8.1 --depth=1 device/samsung/millet3g || \
+        git clone https://github.com/Ex- some-dev/android_device_samsung_millet3g.git -b lineage-15.1 --depth=1 device/samsung/millet3g
+        
+        git clone https://github.com/Unlegacy-Android/android_device_samsung_msm8226-common.git -b unlegacy-8.1 --depth=1 device/samsung/msm8226-common || \
+        git clone https://github.com/Ex- some-dev/android_device_samsung_msm8226-common.git -b lineage-15.1 --depth=1 device/samsung/msm8226-common
+        
+        git clone https://github.com/Unlegacy-Android/android_kernel_samsung_msm8226.git -b unlegacy-8.1 --depth=1 kernel/samsung/millet3g || \
+        git clone https://github.com/Ex- some-dev/android_kernel_samsung_msm8226.git -b lineage-15.1 --depth=1 kernel/samsung/millet3g
+        
+        git clone https://github.com/TheMuppets/proprietary_vendor_samsung.git -b lineage-15.1 --depth=1 vendor/samsung
+
+    - name: Tiến hành thi hành SIÊU CẮT GIẢM DRIVERS PHẦN CỨNG (Bảo tồn cổng 3.5mm)
+      run: |
+        cd ~/aosp
+        # 1. Triệt hạ Driver phần cứng trong cấu hình Nhân (Kernel Defconfig)
         KERNEL_CONF="kernel/samsung/millet3g/arch/arm/configs/msm8226_sec_defconfig"
         if [ -f "$KERNEL_CONF" ]; then
-          # Vô hiệu hóa Driver Camera trước/sau và cụm cảm biến ảnh
+          # Tắt Driver Camera trước và sau
           sed -i 's/CONFIG_VIDEO_S5K4H5YC=y/# CONFIG_VIDEO_S5K4H5YC is not set/g' $KERNEL_CONF
           sed -i 's/CONFIG_MSM_CAMERA=y/# CONFIG_MSM_CAMERA is not set/g' $KERNEL_CONF
           
-          # Vô hiệu hóa Driver Motor rung (Vibrator)
-          sed -i 's/CONFIG_INPUT_KEYRESET=y/# CONFIG_INPUT_KEYRESET is not set/g' $KERNEL_CONF
+          # Tắt Driver Mô-tơ rung (Vibrator)
           sed -i 's/CONFIG_ISA_MSM_VIBRATOR=y/# CONFIG_ISA_MSM_VIBRATOR is not set/g' $KERNEL_CONF
           
-          # Vô hiệu hóa Driver Modem RIL 3G / Data Di động ngầm để chặn tốn pin và RAM quét sóng
+          # Tắt Modem mạng di động 3G (Chuyển sang No-RIL thuần Wifi)
           sed -i 's/CONFIG_MSM_BAM_DMUX=y/# CONFIG_MSM_BAM_DMUX is not set/g' $KERNEL_CONF
-          sed -i 's/CONFIG_USB_G_ANDROID=y/# CONFIG_USB_G_ANDROID is not set/g' $KERNEL_CONF
         fi
 
-        # 2. Cắt giảm Driver âm thanh ở tầng HAL (Audio HAL Config)
-        # Chỉ giữ lại cấu hình cổng Tai nghe 3.5mm (Headset), triệt tiêu loa ngoài (Speaker) và loa thoại (Earpiece)
+        # 2. Cắt giảm driver âm thanh tầng HAL (Loại bỏ loa ngoài, loa thoại - GIỮ CỔNG THOẠI TRONG 3.5MM)
         AUDIO_POLICY="device/samsung/msm8226-common/audio/audio_policy_configuration.xml"
         if [ -f "$AUDIO_POLICY" ]; then
           sed -i '/speaker/d' $AUDIO_POLICY
@@ -96,21 +99,21 @@ jobs:
           sed -i '/builtin_mic/d' $AUDIO_POLICY
         fi
 
-        # 3. Gỡ bỏ ứng dụng Camera, MediaProvider và Dịch vụ In Ấn (PrintSpooler) từ tầng App hệ thống
+        # 3. Gỡ bỏ ứng dụng Camera hệ thống và Dịch vụ In Ấn (PrintSpooler)
         rm -rf packages/apps/Camera2
         rm -rf packages/apps/PrintSpooler
 
     - name: Áp dụng PURE LITE VISUAL PATCH (Màu Blueberry + Nền đen Amoled)
       run: |
         cd ~/aosp
-        # 1. Xóa hoàn toàn Bootanimation (Màn hình khởi động đen tuyệt đối)
+        # 1. Xóa hoàn toàn Bootanimation (Màn hình khởi động đen, boot siêu tốc)
         rm -rf frameworks/base/data/bootanimation
         
-        # 2. Thay thế hình nền mặc định thành màu đen đơn (Pure Black 1x1 pixel)
+        # 2. Ép hình nền mặc định thành màu đen đơn (Pure Black 1x1 pixel)
         rm -f frameworks/base/core/res/res/drawable-nodpi/default_wallpaper.png
         printf '\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc\x00\x01\x00\x00\x05\x00\x01\r\n-\xb4\x00\x00\x00\x00IEND\xaeB`\x82' > frameworks/base/core/res/res/drawable-nodpi/default_wallpaper.png
 
-        # 3. Ép hệ thống tắt sạch hiệu ứng chuyển cảnh & Thay đổi mã màu nền sang Đen Amoled
+        # 3. Ép hệ thống tắt hiệu ứng chuyển cảnh & Thay đổi mã màu nền sang Đen Amoled
         sed -i 's/config_windowAnimationScaleDefault">1/config_windowAnimationScaleDefault">0/g' frameworks/base/core/res/res/values/config.xml
         sed -i 's/config_transitionAnimationScaleDefault">1/config_transitionAnimationScaleDefault">0/g' frameworks/base/core/res/res/values/config.xml
         sed -i 's/config_animatorDurationScaleDefault">1/config_animatorDurationScaleDefault">0/g' frameworks/base/core/res/res/values/config.xml
@@ -118,20 +121,20 @@ jobs:
         sed -i 's/#121212/#000000/g' frameworks/base/core/res/res/values/colors.xml
         sed -i 's/#000000ff/#000000/g' frameworks/base/core/res/res/values/colors.xml
         
-        # 4. Ghi đè mã màu Accent Color mặc định của Google sang màu xanh Blueberry đậm đà
+        # 4. Ghi đè mã màu Accent Color gốc sang màu xanh Blueberry đậm đà
         sed -i 's/#ff009688/#0077ff/g' frameworks/base/core/res/res/values/colors.xml
         sed -i 's/#ff00796b/#0055cc/g' frameworks/base/core/res/res/values/colors.xml
         sed -i 's/#material_deep_teal_500">#ff009688/#material_deep_teal_500">#0077ff/g' frameworks/base/core/res/res/values/colors_material.xml
         sed -i 's/#material_deep_teal_200">#ff80cbc4/#material_deep_teal_200">#80b3ff/g' frameworks/base/core/res/res/values/colors_material.xml
 
-        # 5. Ép tham số build.prop tối ưu RAM thấp (Android Go Mode), kích hoạt phím ảo Navigation Bar và ADB Wifi
+        # 5. Cấu hình chuyên sâu hệ thống vào file system.prop của thiết bị
         echo -e "\nro.config.low_ram=true" >> device/samsung/millet3g/system.prop
         echo -e "qemu.hw.mainkeys=0" >> device/samsung/millet3g/system.prop
         echo -e "service.adb.tcp.port=5555" >> device/samsung/millet3g/system.prop
         echo -e "persist.adb.tcp.port=5555" >> device/samsung/millet3g/system.prop
         echo -e "persist.sys.usb.config=mtp,adb" >> device/samsung/millet3g/system.prop
         
-        # Tắt kiểm tra sóng vô tuyến mạng di động để tăng tốc thời gian boot máy
+        # Tắt kiểm tra sóng vô tuyến mạng di động (No-RIL vĩnh viễn) & Tối ưu GPU Render, Touch phản hồi cao
         echo -e "ro.radio.noril=yes\nhw.nofm=true\nro.config.hw_deadzone=true" >> device/samsung/millet3g/system.prop
         echo -e "ro.ripper.gpurender=true\nvideo.accelerate.hw=1\ndebug.performance.tuning=1\nwindowsmgr.max_events_per_sec=150" >> device/samsung/millet3g/system.prop
         echo -e "ro.sys.fw.bg_apps_limit=4\npm.sleep_mode=1\nro.phone_shell=1" >> device/samsung/millet3g/system.prop
@@ -140,17 +143,18 @@ jobs:
       run: |
         export JACK_SERVER_VM_ARGUMENTS="-Dfile.encoding=UTF-8 -XX:+TieredCompilation -Xmx4g"
         
-    - name: Tiến hành Biên dịch ROM AOSP Custom Hardware (CHỐNG TIMEOUT)
+    - name: Tiến hành Biên dịch ROM AOSP Tối ưu (CHỐNG TIMEOUT)
       run: |
         cd ~/aosp
         export USE_CCACHE=1
         export CCACHE_EXEC=/usr/bin/ccache
         ccache -M 20G
         
-        while true; do echo "...compiling stripped hardware code..."; sleep 180; done &
+        while true; do echo "...compiling pure aosp code with side-loaded hardware..."; sleep 180; done &
         COMPILE_PID=$!
         
         source build/envsetup.sh
+        # Khởi chạy nạp cấu hình máy linh hoạt
         lunch lineage_millet3g-userdebug || lunch aosp_millet3g-userdebug
         mka bacon -j2
         
@@ -161,12 +165,13 @@ jobs:
       if: success()
       with:
         files: /home/runner/aosp/out/target/product/millet3g/*.zip
-        tag_name: aosp-8.1-millet3g-stripped
-        name: AOSP 8.1 Stripped Hardware (No Camera/Modem/Vibe - Audio 3.5mm Only)
+        tag_name: aosp-8.1-millet3g-final
+        name: AOSP 8.1 Pure Blueberry Stripped (Side-loaded Hardware)
         body: |
-          Bản build AOSP 8.1 rút gọn triệt để tài nguyên phần cứng cho Samsung Galaxy Tab 4 8.0 (SM-T331).
-          - Driver cắt giảm sâu trong Kernel: Loại bỏ hoàn toàn Camera trước/sau, Motor rung, Chip sóng di động 3G (ép máy chạy chế độ No-RIL thuần Wifi).
-          - Driver tầng âm thanh: Triệt tiêu Loa ngoài, Loa thoại, CHỈ giữ lại cổng cắm tai nghe 3.5mm.
-          - Theme: Màu Blueberry Accent kết hợp nền Amoled Black tối giản, không in ấn, không bootanimation.
+          Bản build AOSP 8.1 hoàn thiện tối giản sâu sắc cho Samsung Galaxy Tab 4 8.0 (SM-T331).
+          - Đồng bộ AOSP sạch từ Google và nạp riêng Device Tree bằng lệnh Git Clone trực tiếp.
+          - Vô hiệu hóa Driver: Loa ngoài, loa thoại, mô-tơ rung, camera trước/sau, chip mạng di động RIL.
+          - Giữ lại duy nhất kết nối Wifi và cổng âm thanh Tai nghe 3.5mm.
+          - Theme nền đen Amoled kết hợp màu xanh Blueberry Accent, loại bỏ hoàn toàn sườn in ấn.
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
