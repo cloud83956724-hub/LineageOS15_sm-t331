@@ -1,4 +1,4 @@
-name: Build LineageOS 15.1 for SM-T331
+name: Build LineageOS 15.1 Custom Lite for SM-T331
 
 on:
   workflow_dispatch:
@@ -35,61 +35,79 @@ jobs:
         git config --global user.email "tuan_android_tinker@example.com"
         git config --global user.name "Android Builder"
 
-    - name: Khởi tạo Workspace và mã nguồn LineageOS
+    - name: Khởi tạo Workspace và mã nguồn LineageOS 15.1
       run: |
         mkdir -p ~/aosp
         cd ~/aosp
         repo init -u https://github.com/LineageOS/android.git -b lineage-15.1 --depth=1
 
-    # ================= TUYỆT CHIÊU CUỐI: KHỞI TẠO LOCAL MANIFEST =================
-    - name: Tạo cấu hình Local Manifest cho SM-T331
+    - name: Khởi tạo Local Manifest (Bypass lỗi Git Clone qua giao thức HTTPS trực tiếp)
       run: |
-        cd ~/aosp
-        mkdir -p .repo/local_manifests
-        
-        # Tạo file roomservice.xml để ép hệ thống tự động tìm và móc nối mã nguồn bất tử
-        cat <<EOF > .repo/local_manifests/roomservice.xml
+        mkdir -p ~/aosp/.repo/local_manifests
+        cat <<EOF > ~/aosp/.repo/local_manifests/roomservice.xml
         <?xml version="1.0" encoding="UTF-8"?>
         <manifest>
-          <project name="LineageOS/android_device_samsung_millet3g" path="device/samsung/millet3g" remote="github" revision="lineage-15.1" />
-          <project name="LineageOS/android_device_samsung_msm8226-common" path="device/samsung/msm8226-common" remote="github" revision="lineage-15.1" />
-          <project name="LineageOS/android_kernel_samsung_msm8226" path="kernel/samsung/millet3g" remote="github" revision="lineage-15.1" />
-          <project name="TheMuppets/proprietary_vendor_samsung" path="vendor/samsung" remote="github" revision="lineage-15.1" />
+          <remote name="tinker-source" fetch="https://gitlab.com/android-legacy-mirror" />
+          <remote name="muppets" fetch="https://github.com/TheMuppets" />
+
+          <project name="android_device_samsung_millet3g" path="device/samsung/millet3g" remote="tinker-source" revision="lineage-15.1" />
+          <project name="android_device_samsung_msm8226-common" path="device/samsung/msm8226-common" remote="tinker-source" revision="lineage-15.1" />
+          <project name="android_kernel_samsung_msm8226" path="kernel/samsung/millet3g" remote="tinker-source" revision="lineage-15.1" />
+          <project name="proprietary_vendor_samsung" path="vendor/samsung" remote="muppets" revision="lineage-15.1" />
         </manifest>
         EOF
-    # =============================================================================
         
-    - name: Đồng bộ toàn bộ mã nguồn (Bao gồm cả code máy - CHỐNG TIMEOUT)
+    - name: Đồng bộ mã nguồn (CHỐNG TIMEOUT - Bơm Log liên tục)
       run: |
         cd ~/aosp
         while true; do echo "...keep-alive..."; sleep 180; done &
         KEEPALIVE_PID=$!
         
-        # Lệnh sync này sẽ tự động kéo cả đống file trong roomservice.xml về một lượt luôn
-        repo sync -c -j8 --force-sync --no-clone-bundle --no-tags
+        repo sync -c -j4 --force-sync --no-clone-bundle --no-tags --fail-fast
         
         kill $KEEPALIVE_PID
 
-    - name: Áp dụng EXTREME LITE PATCH & ANDROID GO MODE
+    - name: Áp dụng LITE PATCH (Giữ Blueberry Accent + Xóa Print Service + Nền đen đơn sắc)
       run: |
         cd ~/aosp
+        # 1. Xóa hoàn toàn bộ sườn dịch vụ In Ấn ngầm (Print Spooler) để giải phóng RAM
+        rm -rf packages/apps/PrintSpooler
+        rm -rf packages/services/PrintService
+        
+        # 2. Xóa sạch các gói màu Accent khác trong LineageOS, CHỈ GIỮ LẠI gói màu xanh Blueberry
+        # Di chuyển vào thư mục chứa các gói overlay màu sắc của LineageOS
+        cd packages/apps/LineageParts/res/
+        find . -maxdepth 1 -name "overlay_accent_*" ! -name "*blue*" -exec rm -rf {} +
+        cd ~/aosp
+        
+        # 3. Loại bỏ Bootanimation (Màn hình khởi động đen tuyệt đối, boot cực nhanh)
         rm -rf frameworks/base/data/bootanimation
+        
+        # 4. Thay thế hình nền mặc định thành một màu đen đơn (Pure Black) thông qua mã Hex mã hóa ảnh 1x1
+        rm -f frameworks/base/core/res/res/drawable-nodpi/default_wallpaper.png
+        printf '\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc\x00\x01\x00\x00\x05\x00\x01\r\n-\xb4\x00\x00\x00\x00IEND\xaeB`\x82' > frameworks/base/core/res/res/drawable-nodpi/default_wallpaper.png
+
+        # 5. Ép hệ thống tắt hiệu ứng chuyển cảnh & Đưa toàn bộ giao diện nền về đen Amoled
         sed -i 's/config_windowAnimationScaleDefault">1/config_windowAnimationScaleDefault">0/g' frameworks/base/core/res/res/values/config.xml
         sed -i 's/config_transitionAnimationScaleDefault">1/config_transitionAnimationScaleDefault">0/g' frameworks/base/core/res/res/values/config.xml
         sed -i 's/config_animatorDurationScaleDefault">1/config_animatorDurationScaleDefault">0/g' frameworks/base/core/res/res/values/config.xml
         sed -i 's/config_defaultNightMode.*/config_defaultNightMode">2</g' frameworks/base/core/res/res/values/config.xml
         sed -i 's/#121212/#000000/g' frameworks/base/core/res/res/values/colors.xml
         sed -i 's/#000000ff/#000000/g' frameworks/base/core/res/res/values/colors.xml
-        rm -f frameworks/base/core/res/res/drawable-nodpi/default_wallpaper.png
         
-        echo -e "\nro.config.low_ram=true\nqemu.hw.mainkeys=0\nservice.adb.tcp.port=5555\npersist.adb.tcp.port=5555\npersist.sys.usb.config=mtp,adb" >> device/samsung/millet3g/system.prop
+        # 6. Tinh chỉnh sâu vào build.prop (thông qua system.prop của máy)
+        # Ép máy cấu hình RAM thấp (Android Go), bật phím ảo, mở vĩnh viễn ADB Wifi khi khởi động
+        echo -e "\nro.config.low_ram=true" >> device/samsung/millet3g/system.prop
+        echo -e "qemu.hw.mainkeys=0" >> device/samsung/millet3g/system.prop
+        echo -e "service.adb.tcp.port=5555" >> device/samsung/millet3g/system.prop
+        echo -e "persist.adb.tcp.port=5555" >> device/samsung/millet3g/system.prop
+        echo -e "persist.sys.usb.config=mtp,adb" >> device/samsung/millet3g/system.prop
         
-        echo "PRODUCT_PROPERTY_OVERRIDES += ro.config.low_ram=true" >> device/samsung/millet3g/lineage_millet3g.mk
-        echo "PRODUCT_PROPERTY_OVERRIDES += qemu.hw.mainkeys=0" >> device/samsung/millet3g/lineage_millet3g.mk
-        echo "PRODUCT_PROPERTY_OVERRIDES += service.adb.tcp.port=5555" >> device/samsung/millet3g/lineage_millet3g.mk
-        echo "PRODUCT_PROPERTY_OVERRIDES += persist.adb.tcp.port=5555" >> device/samsung/millet3g/lineage_millet3g.mk
+        # Tối ưu hóa phản hồi cảm ứng, ngủ sâu tiết kiệm pin và hiệu suất đồ họa phần cứng
+        echo -e "ro.ripper.gpurender=true\nvideo.accelerate.hw=1\ndebug.performance.tuning=1\nwindowsmgr.max_events_per_sec=150" >> device/samsung/millet3g/system.prop
+        echo -e "ro.sys.fw.bg_apps_limit=4\npm.sleep_mode=1\nro.phone_shell=1" >> device/samsung/millet3g/system.prop
 
-    - name: Cấu hình Jack Server
+    - name: Cấu hình Jack Server (Giới hạn RAM máy ảo)
       run: |
         export JACK_SERVER_VM_ARGUMENTS="-Dfile.encoding=UTF-8 -XX:+TieredCompilation -Xmx4g"
         
@@ -100,7 +118,7 @@ jobs:
         export CCACHE_EXEC=/usr/bin/ccache
         ccache -M 20G
         
-        while true; do echo "...compiling raw code..."; sleep 180; done &
+        while true; do echo "...compiling tailored lineageos..."; sleep 180; done &
         COMPILE_PID=$!
         
         source build/envsetup.sh
@@ -114,11 +132,13 @@ jobs:
       if: success()
       with:
         files: /home/runner/aosp/out/target/product/millet3g/*.zip
-        tag_name: lineage-15.1-millet3g-lite
-        name: LineageOS 15.1 Extreme Lite (Android Go + ADB Wifi)
+        tag_name: lineage-15.1-millet3g-custom-lite
+        name: LineageOS 15.1 Blueberry Custom Lite (No Print + Pure Black)
         body: |
-          Bản build hoàn chỉnh tự động cho Samsung Galaxy Tab 4 8.0 (SM-T331).
-          - Chuyển hẳn sang cơ chế tự động nạp Local Manifest (roomservice).
-          - Vượt qua bộ lọc kiểm tra tài khoản của lệnh git clone thủ công.
+          Bản build rút gọn tối đa độc quyền cho Samsung Galaxy Tab 4 8.0 (SM-T331).
+          - Chỉ giữ lại duy nhất tông màu Blueberry Accent của LineageOS.
+          - Gỡ bỏ hoàn toàn bộ lõi in ấn (Print Spooler/Services) chạy ngầm.
+          - Ép màn hình nền đen tuyệt đối (Pure Black 1x1 Wallpaper).
+          - Kích hoạt tổ hợp phím ảo Navigation Bar và mở sẵn cổng ADB qua mạng Wifi.
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
