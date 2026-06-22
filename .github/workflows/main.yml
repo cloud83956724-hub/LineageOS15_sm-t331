@@ -1,4 +1,4 @@
-name: Build AOSP 8.1 Stripped Hardware for SM-T331
+name: Build AOSP 8.1 Custom Hardware Lite for SM-T331
 
 on:
   workflow_dispatch:
@@ -39,7 +39,6 @@ jobs:
       run: |
         mkdir -p ~/aosp
         cd ~/aosp
-        # Chỉ init bộ mã nguồn cốt lõi thuần túy của Google
         repo init -u https://android.googlesource.com/platform/manifest -b android-8.1.0_r81 --depth=1
 
     - name: Đồng bộ mã nguồn cơ sở AOSP (CHỐNG TIMEOUT)
@@ -48,29 +47,25 @@ jobs:
         while true; do echo "...keep-alive..."; sleep 180; done &
         KEEPALIVE_PID=$!
         
-        # Đồng bộ sạch sẽ hệ thống cốt lõi trước, không cài cắm manifest phần cứng lỗi vào đây
         repo sync -c -j4 --force-sync --no-clone-bundle --no-tags --fail-fast
         
         kill $KEEPALIVE_PID
 
-    - name: Bốc thẳng phần cứng bằng Git Clone thủ công (Bypass hoàn toàn Repo lỗi)
+    - name: Bốc thẳng phần cứng bằng Git Clone thủ công (Đã sửa lỗi khoảng trắng tham số)
       run: |
         cd ~/aosp
-        # Tạo sẵn các cấu trúc thư mục đích
-        mkdir -p device/samsung/millet3g
-        mkdir -p device/samsung/msm8226-common
-        mkdir -p kernel/samsung/millet3g
-        mkdir -p vendor/samsung
+        # Xóa sạch các thư mục cũ nếu có để tránh xung đột cấu trúc
+        rm -rf device/samsung/millet3g device/samsung/msm8226-common kernel/samsung/millet3g vendor/samsung
         
-        # Tải trực tiếp cây cấu hình từ các nhánh di sản còn sống sót trên GitHub bằng lệnh Git truyền thống
-        git clone https://github.com/Unlegacy-Android/android_device_samsung_millet3g.git -b unlegacy-8.1 --depth=1 device/samsung/millet3g || \
-        git clone https://github.com/Ex- some-dev/android_device_samsung_millet3g.git -b lineage-15.1 --depth=1 device/samsung/millet3g
+        # Sử dụng nguồn lưu trữ độc lập chính xác, không chứa khoảng trắng lỗi
+        git clone https://github.com/LineageOS-UL/android_device_samsung_millet3g.git -b lineage-15.1 --depth=1 device/samsung/millet3g || \
+        git clone https://github.com/ivanich/android_device_samsung_millet3g.git -b cm-14.1 --depth=1 device/samsung/millet3g
         
-        git clone https://github.com/Unlegacy-Android/android_device_samsung_msm8226-common.git -b unlegacy-8.1 --depth=1 device/samsung/msm8226-common || \
-        git clone https://github.com/Ex- some-dev/android_device_samsung_msm8226-common.git -b lineage-15.1 --depth=1 device/samsung/msm8226-common
+        git clone https://github.com/LineageOS-UL/android_device_samsung_msm8226-common.git -b lineage-15.1 --depth=1 device/samsung/msm8226-common || \
+        git clone https://github.com/ivanich/android_device_samsung_msm8226-common.git -b cm-14.1 --depth=1 device/samsung/msm8226-common
         
-        git clone https://github.com/Unlegacy-Android/android_kernel_samsung_msm8226.git -b unlegacy-8.1 --depth=1 kernel/samsung/millet3g || \
-        git clone https://github.com/Ex- some-dev/android_kernel_samsung_msm8226.git -b lineage-15.1 --depth=1 kernel/samsung/millet3g
+        git clone https://github.com/LineageOS-UL/android_kernel_samsung_msm8226.git -b lineage-15.1 --depth=1 kernel/samsung/millet3g || \
+        git clone https://github.com/ivanich/android_kernel_samsung_msm8226.git -b cm-14.1 --depth=1 kernel/samsung/millet3g
         
         git clone https://github.com/TheMuppets/proprietary_vendor_samsung.git -b lineage-15.1 --depth=1 vendor/samsung
 
@@ -80,18 +75,13 @@ jobs:
         # 1. Triệt hạ Driver phần cứng trong cấu hình Nhân (Kernel Defconfig)
         KERNEL_CONF="kernel/samsung/millet3g/arch/arm/configs/msm8226_sec_defconfig"
         if [ -f "$KERNEL_CONF" ]; then
-          # Tắt Driver Camera trước và sau
           sed -i 's/CONFIG_VIDEO_S5K4H5YC=y/# CONFIG_VIDEO_S5K4H5YC is not set/g' $KERNEL_CONF
           sed -i 's/CONFIG_MSM_CAMERA=y/# CONFIG_MSM_CAMERA is not set/g' $KERNEL_CONF
-          
-          # Tắt Driver Mô-tơ rung (Vibrator)
           sed -i 's/CONFIG_ISA_MSM_VIBRATOR=y/# CONFIG_ISA_MSM_VIBRATOR is not set/g' $KERNEL_CONF
-          
-          # Tắt Modem mạng di động 3G (Chuyển sang No-RIL thuần Wifi)
           sed -i 's/CONFIG_MSM_BAM_DMUX=y/# CONFIG_MSM_BAM_DMUX is not set/g' $KERNEL_CONF
         fi
 
-        # 2. Cắt giảm driver âm thanh tầng HAL (Loại bỏ loa ngoài, loa thoại - GIỮ CỔNG THOẠI TRONG 3.5MM)
+        # 2. Cắt giảm driver âm thanh tầng HAL (Loại bỏ loa ngoài, loa thoại - GIỮ CỔNG TRONG 3.5MM)
         AUDIO_POLICY="device/samsung/msm8226-common/audio/audio_policy_configuration.xml"
         if [ -f "$AUDIO_POLICY" ]; then
           sed -i '/speaker/d' $AUDIO_POLICY
@@ -106,12 +96,12 @@ jobs:
     - name: Áp dụng PURE LITE VISUAL PATCH (Màu Blueberry + Nền đen Amoled)
       run: |
         cd ~/aosp
-        # 1. Xóa hoàn toàn Bootanimation (Màn hình khởi động đen, boot siêu tốc)
+        # 1. Xóa hoàn toàn Bootanimation
         rm -rf frameworks/base/data/bootanimation
         
         # 2. Ép hình nền mặc định thành màu đen đơn (Pure Black 1x1 pixel)
         rm -f frameworks/base/core/res/res/drawable-nodpi/default_wallpaper.png
-        printf '\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc\x00\x01\x00\x00\x05\x00\x01\r\n-\xb4\x00\x00\x00\x00IEND\xaeB`\x82' > frameworks/base/core/res/res/drawable-nodpi/default_wallpaper.png
+        printf '\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc\x00\x01\x00\x00\x05\x00\x01\r\n-\xb4\x00\x00\x00\x00IEND\aeB`\x82' > frameworks/base/core/res/res/drawable-nodpi/default_wallpaper.png
 
         # 3. Ép hệ thống tắt hiệu ứng chuyển cảnh & Thay đổi mã màu nền sang Đen Amoled
         sed -i 's/config_windowAnimationScaleDefault">1/config_windowAnimationScaleDefault">0/g' frameworks/base/core/res/res/values/config.xml
@@ -134,7 +124,6 @@ jobs:
         echo -e "persist.adb.tcp.port=5555" >> device/samsung/millet3g/system.prop
         echo -e "persist.sys.usb.config=mtp,adb" >> device/samsung/millet3g/system.prop
         
-        # Tắt kiểm tra sóng vô tuyến mạng di động (No-RIL vĩnh viễn) & Tối ưu GPU Render, Touch phản hồi cao
         echo -e "ro.radio.noril=yes\nhw.nofm=true\nro.config.hw_deadzone=true" >> device/samsung/millet3g/system.prop
         echo -e "ro.ripper.gpurender=true\nvideo.accelerate.hw=1\ndebug.performance.tuning=1\nwindowsmgr.max_events_per_sec=150" >> device/samsung/millet3g/system.prop
         echo -e "ro.sys.fw.bg_apps_limit=4\npm.sleep_mode=1\nro.phone_shell=1" >> device/samsung/millet3g/system.prop
@@ -154,7 +143,6 @@ jobs:
         COMPILE_PID=$!
         
         source build/envsetup.sh
-        # Khởi chạy nạp cấu hình máy linh hoạt
         lunch lineage_millet3g-userdebug || lunch aosp_millet3g-userdebug
         mka bacon -j2
         
