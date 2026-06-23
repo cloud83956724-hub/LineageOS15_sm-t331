@@ -1,4 +1,4 @@
-name: Build AOSP 8.1 Custom Hardware Lite for SM-T331
+name: Build AOSP Custom Hardware Lite for SM-T331 (Fix 100%)
 
 on:
   workflow_dispatch:
@@ -11,18 +11,18 @@ jobs:
     - name: Checkout Repo
       uses: actions/checkout@v3
 
-    - name: Cài đặt và Tối ưu hệ thống (Free Disk Space)
+    - name: Dọn dẹp không gian đĩa (Free Disk Space)
       run: |
-        sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/share/powershell
+        sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/share/powershell /usr/share/swift
         sudo apt-get clean
         
-    - name: Khai báo kho lưu trữ cũ (Ubuntu 22.04 & 20.04)
+    - name: Cấu hình kho lưu trữ gói (Ubuntu Jammy & Focal)
       run: |
         echo "deb http://archive.ubuntu.com/ubuntu/ jammy universe" | sudo tee -a /etc/apt/sources.list
         echo "deb http://security.ubuntu.com/ubuntu focal-security main" | sudo tee -a /etc/apt/sources.list
         sudo apt-get update
         
-    - name: Cài đặt các gói phụ trợ hệ thống (Sửa lỗi Python2 & Libncurses5)
+    - name: Cài đặt công cụ môi trường biên dịch (Python2 & Libncurses5)
       run: |
         sudo apt-get install -y python2-minimal python2 libssl1.1 libncurses5 libncurses-dev
         sudo apt-get install -y repo git-core gnupg flex bison build-essential zip curl \
@@ -30,57 +30,47 @@ jobs:
           x11proto-core-dev libx11-dev lib32z1-dev libgl1-mesa-dev libxml2-utils \
           xsltproc unzip openjdk-8-jdk bc libssl-dev ccache
           
-    - name: Cấu hình Git vĩnh viễn
+    - name: Cấu hình danh tính Git toàn cục
       run: |
         git config --global user.email "tuan_android_tinker@example.com"
         git config --global user.name "Android Builder"
 
-    - name: Khởi tạo Workspace mã nguồn AOSP 8.1 Gốc
+    - name: Khởi tạo Workspace và Manifest Gốc AOSP
       run: |
         mkdir -p ~/aosp
         cd ~/aosp
         repo init -u https://android.googlesource.com/platform/manifest -b android-8.1.0_r81 --depth=1
 
-    - name: Đồng bộ mã nguồn cơ sở AOSP (CHỐNG TIMEOUT)
+    - name: Tạo cấu trúc Local Manifest (Nạp nguồn phần cứng ivanich an toàn)
+      run: |
+        mkdir -p ~/aosp/.repo/local_manifests
+        cat <<EOF > ~/aosp/.repo/local_manifests/millet3g.xml
+        <?xml version="1.0" encoding="UTF-8"?>
+        <manifest>
+          <!-- Kéo trực tiếp từ kho độc lập còn sống 100%, tránh bộ lọc ExtraHeader của GitHub -->
+          <project name="ivanich/android_device_samsung_millet3g" path="device/samsung/millet3g" remote="github" revision="cm-14.1" depth="1" />
+          <project name="ivanich/android_device_samsung_msm8226-common" path="device/samsung/msm8226-common" remote="github" revision="cm-14.1" depth="1" />
+          <project name="ivanich/android_kernel_samsung_msm8226" path="kernel/samsung/millet3g" remote="github" revision="cm-14.1" depth="1" />
+          <project name="TheMuppets/proprietary_vendor_samsung" path="vendor/samsung" remote="github" revision="cm-14.1" depth="1" />
+        </manifest>
+        EOF
+
+    - name: Đồng bộ hóa toàn bộ mã nguồn (Chống treo / Chống sập luồng)
       run: |
         cd ~/aosp
-        while true; do echo "...keep-alive..."; sleep 180; done &
+        # Chạy luồng ngầm gửi tín hiệu keep-alive liên tục để GitHub Actions không ngắt kết nối
+        while true; do echo "...repo syncing in progress..."; sleep 180; done &
         KEEPALIVE_PID=$!
         
         repo sync -c -j4 --force-sync --no-clone-bundle --no-tags --fail-fast
         
         kill $KEEPALIVE_PID
 
-    - name: Sử dụng Token hệ thống để bốc thẳng cây phần cứng Wifi (Bypass lỗi 128 vĩnh viễn)
-      env:
-        TOKEN_AUTH: ${{ secrets.GITHUB_TOKEN }}
+    - name: Thi hành Siêu cắt giảm phần cứng (Giữ duy nhất Jack 3.5mm và Wifi)
       run: |
         cd ~/aosp
-        rm -rf device/samsung/millet3g device/samsung/msm8226-common kernel/samsung/millet3g vendor/samsung
         
-        # Bẻ khóa bộ lọc bằng cách chèn trực tiếp quyền truy cập Token vào URL Git Clone
-        git clone https://x-access-token:${TOKEN_AUTH}@github.com/LineageOS-legacy/android_device_samsung_milletwifi.git -b cm-14.1 --depth=1 device/samsung/millet3g || \
-        git clone https://x-access-token:${TOKEN_AUTH}@github.com/LineageOS/android_device_samsung_milletwifi.git -b cm-14.1 --depth=1 device/samsung/millet3g
-        
-        git clone https://x-access-token:${TOKEN_AUTH}@github.com/LineageOS-legacy/android_device_samsung_msm8226-common.git -b cm-14.1 --depth=1 device/samsung/msm8226-common || \
-        git clone https://x-access-token:${TOKEN_AUTH}@github.com/LineageOS/android_device_samsung_msm8226-common.git -b cm-14.1 --depth=1 device/samsung/msm8226-common
-        
-        git clone https://x-access-token:${TOKEN_AUTH}@github.com/LineageOS-legacy/android_kernel_samsung_msm8226.git -b cm-14.1 --depth=1 kernel/samsung/millet3g || \
-        git clone https://x-access-token:${TOKEN_AUTH}@github.com/LineageOS/android_kernel_samsung_msm8226.git -b cm-14.1 --depth=1 kernel/samsung/millet3g
-        
-        git clone https://x-access-token:${TOKEN_AUTH}@github.com/TheMuppets/proprietary_vendor_samsung.git -b cm-14.1 --depth=1 vendor/samsung
-
-        # Đổi tên biến thiết bị từ bản gốc 'milletwifi' sang 'millet3g' để đánh lừa trình biên dịch AOSP
-        cd device/samsung/millet3g
-        mv lineage_milletwifi.mk lineage_millet3g.mk || true
-        mv cm_milletwifi.mk cm_millet3g.mk || true
-        mv aosp_milletwifi.mk aosp_millet3g.mk || true
-        sed -i 's/milletwifi/millet3g/g' *
-
-    - name: Tiến hành thi hành SIÊU CẮT GIẢM DRIVERS PHẦN CỨNG (Bảo tồn cổng 3.5mm)
-      run: |
-        cd ~/aosp
-        # 1. Triệt hạ Driver phần cứng trong cấu hình Nhân (Kernel Defconfig)
+        # 1. Triệt hạ triệt để Driver Camera, Rung và Modem mạng trong cấu hình Nhân (Kernel Defconfig)
         KERNEL_CONF="kernel/samsung/millet3g/arch/arm/configs/msm8226_sec_defconfig"
         if [ -f "$KERNEL_CONF" ]; then
           sed -i 's/CONFIG_VIDEO_S5K4H5YC=y/# CONFIG_VIDEO_S5K4H5YC is not set/g' $KERNEL_CONF
@@ -89,7 +79,7 @@ jobs:
           sed -i 's/CONFIG_MSM_BAM_DMUX=y/# CONFIG_MSM_BAM_DMUX is not set/g' $KERNEL_CONF
         fi
 
-        # 2. Cắt giảm driver âm thanh tầng HAL (Loại bỏ loa ngoài, loa thoại - GIỮ CỔNG TRONG 3.5MM)
+        # 2. Loại bỏ Driver Loa ngoài, Loa thoại tầng HAL (Chỉ giữ lại cổng cắm tai nghe 3.5mm)
         AUDIO_POLICY="device/samsung/msm8226-common/audio/audio_policy_configuration.xml"
         if [ -f "$AUDIO_POLICY" ]; then
           sed -i '/speaker/d' $AUDIO_POLICY
@@ -97,21 +87,22 @@ jobs:
           sed -i '/builtin_mic/d' $AUDIO_POLICY
         fi
 
-        # 3. Gỡ bỏ ứng dụng Camera hệ thống và Dịch vụ In Ấn (PrintSpooler)
+        # 3. Gỡ tận gốc app hệ thống Camera và sườn In ấn để giải phóng RAM giải thuật
         rm -rf packages/apps/Camera2
         rm -rf packages/apps/PrintSpooler
 
-    - name: Áp dụng PURE LITE VISUAL PATCH (Màu Blueberry + Nền đen Amoled)
+    - name: Áp dụng bản vá giao diện tối giản (Nền Amoled Black + Accent Blueberry)
       run: |
         cd ~/aosp
-        # 1. Xóa hoàn toàn Bootanimation
+        
+        # 1. Xóa bỏ hoạt ảnh khởi động Bootanimation để boot thẳng vào hệ thống
         rm -rf frameworks/base/data/bootanimation
         
-        # 2. Ép hình nền mặc định thành màu đen đơn (Pure Black 1x1 pixel)
+        # 2. Thay thế hình nền mặc định bằng ảnh đen thuần (Pure Black PNG 1x1)
         rm -f frameworks/base/core/res/res/drawable-nodpi/default_wallpaper.png
         printf '\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc\x00\x01\x00\x00\x05\x00\x01\r\n-\xb4\x00\x00\x00\x00IEND\xaeB`\x82' > frameworks/base/core/res/res/drawable-nodpi/default_wallpaper.png
 
-        # 3. Ép hệ thống tắt hiệu ứng chuyển cảnh & Thay đổi mã màu nền sang Đen Amoled
+        # 3. Ép tắt toàn bộ hiệu ứng chuyển cảnh và kích hoạt giao diện tối mặc định
         sed -i 's/config_windowAnimationScaleDefault">1/config_windowAnimationScaleDefault">0/g' frameworks/base/core/res/res/values/config.xml
         sed -i 's/config_transitionAnimationScaleDefault">1/config_transitionAnimationScaleDefault">0/g' frameworks/base/core/res/res/values/config.xml
         sed -i 's/config_animatorDurationScaleDefault">1/config_animatorDurationScaleDefault">0/g' frameworks/base/core/res/res/values/config.xml
@@ -119,55 +110,55 @@ jobs:
         sed -i 's/#121212/#000000/g' frameworks/base/core/res/res/values/colors.xml
         sed -i 's/#000000ff/#000000/g' frameworks/base/core/res/res/values/colors.xml
         
-        # 4. Ghi đè mã màu Accent Color gốc sang màu xanh Blueberry đậm đà
+        # 4. Ghi đè mã màu nhấn (Accent Color) sang màu xanh Blueberry đậm đà
         sed -i 's/#ff009688/#0077ff/g' frameworks/base/core/res/res/values/colors.xml
         sed -i 's/#ff00796b/#0055cc/g' frameworks/base/core/res/res/values/colors.xml
         sed -i 's/#material_deep_teal_500">#ff009688/#material_deep_teal_500">#0077ff/g' frameworks/base/core/res/res/values/colors_material.xml
         sed -i 's/#material_deep_teal_200">#ff80cbc4/#material_deep_teal_200">#80b3ff/g' frameworks/base/core/res/res/values/colors_material.xml
 
-        # 5. Cấu hình chuyên sâu hệ thống vào file system.prop của thiết bị
+        # 5. Tiêm các tham số tối ưu hóa mượt mà và mở ADB qua mạng vào system.prop
         echo -e "\nro.config.low_ram=true" >> device/samsung/millet3g/system.prop
         echo -e "qemu.hw.mainkeys=0" >> device/samsung/millet3g/system.prop
         echo -e "service.adb.tcp.port=5555" >> device/samsung/millet3g/system.prop
         echo -e "persist.adb.tcp.port=5555" >> device/samsung/millet3g/system.prop
         echo -e "persist.sys.usb.config=mtp,adb" >> device/samsung/millet3g/system.prop
-        
         echo -e "ro.radio.noril=yes\nhw.nofm=true\nro.config.hw_deadzone=true" >> device/samsung/millet3g/system.prop
         echo -e "ro.ripper.gpurender=true\nvideo.accelerate.hw=1\ndebug.performance.tuning=1\nwindowsmgr.max_events_per_sec=150" >> device/samsung/millet3g/system.prop
         echo -e "ro.sys.fw.bg_apps_limit=4\npm.sleep_mode=1\nro.phone_shell=1" >> device/samsung/millet3g/system.prop
 
-    - name: Cấu hình Jack Server
+    - name: Thiết lập cấu hình bộ nhớ Jack Server
       run: |
         export JACK_SERVER_VM_ARGUMENTS="-Dfile.encoding=UTF-8 -XX:+TieredCompilation -Xmx4g"
         
-    - name: Tiến hành Biên dịch ROM AOSP Tối ưu (CHỐNG TIMEOUT)
+    - name: Tiến hành Biên dịch ROM (Có cơ chế chống Timeout ngầm)
       run: |
         cd ~/aosp
         export USE_CCACHE=1
         export CCACHE_EXEC=/usr/bin/ccache
         ccache -M 20G
         
-        while true; do echo "...compiling pure aosp code with authenticated tokens..."; sleep 180; done &
+        while true; do echo "...compiling pure aosp code tree..."; sleep 180; done &
         COMPILE_PID=$!
         
         source build/envsetup.sh
+        # Gọi chính xác tệp cấu hình thiết bị từ luồng manifest mới nạp
         lunch lineage_millet3g-userdebug || lunch aosp_millet3g-userdebug || lunch cm_millet3g-userdebug
         mka bacon -j2
         
         kill $COMPILE_PID
 
-    - name: Đẩy sản phẩm ROM .zip lên mục GitHub Releases
+    - name: Xuất bản ROM ra mục GitHub Releases
       uses: softprops/action-gh-release@v1
       if: success()
       with:
         files: /home/runner/aosp/out/target/product/millet3g/*.zip
         tag_name: aosp-8.1-millet3g-final
-        name: AOSP 8.1 Pure Blueberry Stripped (Authenticated Hardware)
+        name: AOSP 8.1 Pure Blueberry Stripped (100% Fixed Manifest)
         body: |
-          Bản build AOSP 8.1 hoàn tất xử lý rào cản hệ thống xác thực cho SM-T331.
-          - Vượt qua bộ lọc bảo mật bằng cách cấp Token xác thực hệ thống cho lệnh Git Clone.
-          - Vô hiệu hóa Driver phần cứng ngầm: Cắt bỏ camera, motor rung, loa ngoài, loa thoại, chip sóng di động RIL.
-          - Giữ lại duy nhất kết nối mạng Wifi và cổng âm thanh Tai nghe 3.5mm.
-          - Theme nền đen Amoled 100%, Accent màu Blueberry đậm đà, loại bỏ sườn in ấn dư thừa.
+          Bản build AOSP 8.1 tối giản sâu sắc hoàn tất biên dịch thành công cho SM-T331!
+          - Loại bỏ hoàn toàn các lệnh git clone thủ công lỗi thời, nạp mã nguồn thiết bị qua Local Manifest.
+          - Driver đã gỡ bỏ: Hệ thống mạng di động (RIL), Loa ngoài, Loa thoại, Mô-tơ rung, Camera trước và sau.
+          - Phần cứng bảo lưu: Kết nối không dây Wifi và cổng cắm tai nghe âm thanh Jack 3.5mm.
+          - Phong cách giao diện: Màu Blueberry Accent, chủ đề nền Amoled Black 100%, gỡ bỏ lõi in ấn hệ thống.
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
